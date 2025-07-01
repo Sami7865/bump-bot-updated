@@ -5,9 +5,9 @@ import os
 import asyncio
 import datetime
 from pymongo import MongoClient
-from keep_alive import keep_alive  # uptime ping
+from keep_alive import keep_alive  # Flask server to keep bot alive
 
-# Get environment variables from Render
+# Get from Render environment variables
 TOKEN = os.environ.get("DISCORD_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
@@ -19,21 +19,20 @@ intents.members = True
 intents.message_content = True
 
 client = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(client)
 
 mongo = MongoClient(MONGO_URI)
 db = mongo["bump_bot"]
 bump_data = db["bump_data"]
 config_data = db["config_data"]
 
-REMINDER_INTERVAL = 2 * 60 * 60  # 2 hours
+REMINDER_INTERVAL = 2 * 60 * 60  # 2 hours (in seconds)
 
 @client.event
 async def on_ready():
     print(f"✅ Logged in as {client.user}")
     bump_reminder_loop.start()
     try:
-        synced = await tree.sync()
+        synced = await client.tree.sync()
         print(f"✅ Synced {len(synced)} command(s)")
     except Exception as e:
         print("❌ Sync failed:", e)
@@ -59,7 +58,6 @@ async def on_message(message):
             upsert=True
         )
 
-        # Log bump in log_channel
         config = config_data.find_one({"guild_id": guild_id})
         if config and "log_channel_id" in config:
             try:
@@ -94,8 +92,8 @@ async def bump_reminder_loop():
                 except Exception as e:
                     print("❌ DM failed:", e)
 
-# Slash command: bumpstatus
-@tree.command(name="bumpstatus", description="Check how long until your next bump reminder")
+# Slash command: /bumpstatus
+@client.tree.command(name="bumpstatus", description="Check how long until your next bump reminder")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bumpstatus(interaction: discord.Interaction):
     guild_id = str(interaction.guild.id)
@@ -118,8 +116,8 @@ async def bumpstatus(interaction: discord.Interaction):
         f"🕒 Next bump reminder for <@{user_id}> in **{minutes} minutes**", ephemeral=True
     )
 
-# Slash command: set log channel
-@tree.command(name="setlogchannel", description="Set the log channel for bump notifications")
+# Slash command: /setlogchannel
+@client.tree.command(name="setlogchannel", description="Set the log channel for bump notifications")
 @app_commands.checks.has_permissions(administrator=True)
 async def setlogchannel(interaction: discord.Interaction, channel: discord.TextChannel):
     config_data.update_one(
@@ -129,8 +127,8 @@ async def setlogchannel(interaction: discord.Interaction, channel: discord.TextC
     )
     await interaction.response.send_message(f"✅ Log channel set to {channel.mention}", ephemeral=True)
 
-# Slash command: set ping role
-@tree.command(name="setpingrole", description="Set the role to ping on bumps")
+# Slash command: /setpingrole
+@client.tree.command(name="setpingrole", description="Set the role to ping on bumps")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     config_data.update_one(
@@ -140,13 +138,13 @@ async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     )
     await interaction.response.send_message(f"✅ Ping role set to {role.mention}", ephemeral=True)
 
-# Error handler
+# Error handling for permissions
 @setlogchannel.error
 @setpingrole.error
 async def permission_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ You need administrator permission.", ephemeral=True)
 
-# Start bot with keep_alive
+# Start the Flask server to keep alive + run bot
 keep_alive()
 client.run(TOKEN)
