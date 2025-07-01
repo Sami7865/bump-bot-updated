@@ -5,11 +5,13 @@ import os
 import asyncio
 import datetime
 from pymongo import MongoClient
+from keep_alive import keep_alive  # uptime ping
 
-# Get values from Render Environment Variables
+# Get environment variables from Render
 TOKEN = os.environ.get("DISCORD_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
+# Discord bot setup
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
@@ -46,8 +48,6 @@ async def on_message(message):
         now = datetime.datetime.utcnow()
         user_id = str(message.author.id)
 
-        entry = bump_data.find_one({"guild_id": guild_id})
-
         bump_data.update_one(
             {"guild_id": guild_id},
             {
@@ -59,6 +59,7 @@ async def on_message(message):
             upsert=True
         )
 
+        # Log bump in log_channel
         config = config_data.find_one({"guild_id": guild_id})
         if config and "log_channel_id" in config:
             try:
@@ -93,8 +94,7 @@ async def bump_reminder_loop():
                 except Exception as e:
                     print("❌ DM failed:", e)
 
-### Slash Commands ###
-
+# Slash command: bumpstatus
 @tree.command(name="bumpstatus", description="Check how long until your next bump reminder")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bumpstatus(interaction: discord.Interaction):
@@ -118,6 +118,7 @@ async def bumpstatus(interaction: discord.Interaction):
         f"🕒 Next bump reminder for <@{user_id}> in **{minutes} minutes**", ephemeral=True
     )
 
+# Slash command: set log channel
 @tree.command(name="setlogchannel", description="Set the log channel for bump notifications")
 @app_commands.checks.has_permissions(administrator=True)
 async def setlogchannel(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -128,6 +129,7 @@ async def setlogchannel(interaction: discord.Interaction, channel: discord.TextC
     )
     await interaction.response.send_message(f"✅ Log channel set to {channel.mention}", ephemeral=True)
 
+# Slash command: set ping role
 @tree.command(name="setpingrole", description="Set the role to ping on bumps")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpingrole(interaction: discord.Interaction, role: discord.Role):
@@ -138,11 +140,13 @@ async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     )
     await interaction.response.send_message(f"✅ Ping role set to {role.mention}", ephemeral=True)
 
-### Error Handling ###
+# Error handler
 @setlogchannel.error
 @setpingrole.error
 async def permission_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ You need administrator permission.", ephemeral=True)
 
+# Start bot with keep_alive
+keep_alive()
 client.run(TOKEN)
