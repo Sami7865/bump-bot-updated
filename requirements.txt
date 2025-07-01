@@ -1,3 +1,3 @@
-discord.py>=2.3.2
+discord.py
 pymongo[srv]>=4.6.1
 flask
