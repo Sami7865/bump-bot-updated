@@ -6,11 +6,11 @@ from keep_alive import keep_alive
 from datetime import datetime, timedelta, UTC
 import os
 
-# Environment variables (set in Render)
+# Environment variables (set on Render)
 TOKEN = os.environ.get("DISCORD_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
-# Discord bot setup
+# Bot setup
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
@@ -20,6 +20,7 @@ intents.message_content = True
 client = commands.Bot(command_prefix="!", intents=intents)
 tree = client.tree
 
+# MongoDB setup
 mongo = MongoClient(MONGO_URI)
 db = mongo["bump_bot"]
 bump_data = db["bump_data"]
@@ -36,64 +37,63 @@ async def on_ready():
         synced = await tree.sync()
         print(f"✅ Synced {len(synced)} command(s)")
     except Exception as e:
-        print("❌ Sync failed:", e)
+        print("❌ Slash sync failed:", e)
 
 @client.event
 async def on_message(message):
     if message.author.bot:
         return
 
-    # Test bump trigger
+    # Manual bump test (!d bump)
     if message.content.lower().startswith("!d bump"):
         await handle_bump(message.author, message.guild)
         return
 
-    # Detect actual Disboard bump
+    # Detect Disboard bump confirmation embed
     if message.author.id == 302050872383242240 and message.embeds:
         embed = message.embeds[0]
         if embed.title and "bump done" in embed.title.lower():
-            async for m in message.channel.history(limit=10):
-                if m.content == "/bump" and not m.author.bot:
-                    await handle_bump(m.author, m.guild)
-                    break
+            if message.interaction:
+                bumper = message.interaction.user
+                await handle_bump(bumper, message.guild)
 
     await client.process_commands(message)
 
-# Bump handler
 async def handle_bump(user, guild):
     now = datetime.now(UTC)
     guild_id = str(guild.id)
     user_id = str(user.id)
 
+    # Save bump record
     bump_data.update_one(
         {"guild_id": guild_id},
         {"$set": {"user_id": user_id, "last_bump": now}},
         upsert=True
     )
 
+    # Log bump to history
     bump_history.insert_one({
         "guild_id": guild_id,
         "user_id": user_id,
         "timestamp": now
     })
 
+    # Send log message if configured
     config = config_data.find_one({"guild_id": guild_id})
     if config and "log_channel_id" in config:
         try:
             log_channel = guild.get_channel(int(config["log_channel_id"]))
             next_bump = now + timedelta(seconds=REMINDER_INTERVAL)
             next_str = next_bump.strftime("%Y-%m-%d %H:%M:%S UTC")
-
             await log_channel.send(
                 f"📢 {user.mention} bumped the server!\n"
                 f"🕒 Next reminder at **{next_str}**"
             )
         except Exception as e:
-            print("❌ Log send failed:", e)
+            print("❌ Failed to send log:", e)
 
-    print(f"✅ Bump recorded from {user}")
+    print(f"✅ Bump tracked from {user.name} in {guild.name}")
 
-# Reminder loop
 @tasks.loop(seconds=60)
 async def bump_reminder_loop():
     now = datetime.now(UTC)
@@ -136,7 +136,7 @@ async def bump_reminder_loop():
                 )
 
             except Exception as e:
-                print(f"❌ Reminder error in guild {guild_id}: {e}")
+                print(f"❌ Error in reminder loop: {e}")
 
 # Slash command: /bumpstatus
 @tree.command(name="bumpstatus", description="Check time left until next bump reminder")
@@ -177,7 +177,7 @@ async def setlogchannel(interaction: discord.Interaction, channel: discord.TextC
     await interaction.response.send_message(f"✅ Log channel set to {channel.mention}", ephemeral=True)
 
 # Slash command: /setpingrole
-@tree.command(name="setpingrole", description="Set the role to ping after 2hr reminder")
+@tree.command(name="setpingrole", description="Set the role to ping in 2hr reminders")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     config_data.update_one(
@@ -187,7 +187,7 @@ async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     )
     await interaction.response.send_message(f"✅ Ping role set to {role.mention}", ephemeral=True)
 
-# Error handling for permission issues
+# Slash error handler
 @setlogchannel.error
 @setpingrole.error
 @bumpstatus.error
@@ -195,6 +195,6 @@ async def permission_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ You need `Manage Server` permission.", ephemeral=True)
 
-# Run bot + Flask keep_alive server
+# Run Flask keep-alive + bot
 keep_alive()
 client.run(TOKEN)
