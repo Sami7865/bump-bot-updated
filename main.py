@@ -19,7 +19,6 @@ intents.members = True
 intents.messages = True
 
 client = commands.Bot(command_prefix="!", intents=intents)
-tree = app_commands.CommandTree(client)
 
 mongo_client = MongoClient(MONGO_URI)
 db = mongo_client["bumpbot"]
@@ -33,16 +32,15 @@ async def on_ready():
     print(f"✅ Logged in as {client.user}")
     activity = discord.Activity(type=discord.ActivityType.listening, name="/bump")
     await client.change_presence(status=discord.Status.online, activity=activity)
-    await tree.sync()
+    await client.tree.sync()
     bump_reminder_loop.start()
 
 @client.event
 async def on_message(message):
-    if message.author.bot and message.embeds:
+    if message.author.id == 302050872383242240 and message.embeds:
         embed = message.embeds[0]
         if embed.title and "DISBOARD" in embed.title and "Bump done!" in embed.description:
             bumper = None
-
             if message.interaction:
                 bumper = message.interaction.user
             else:
@@ -67,21 +65,20 @@ async def on_message(message):
 
             settings = settings_col.find_one({"guild_id": guild_id}) or {}
             log_channel_id = settings.get("log_channel_id")
-            role_id = settings.get("ping_role_id")
 
             if log_channel_id:
                 log_channel = client.get_channel(log_channel_id)
                 if log_channel:
                     embed_log = discord.Embed(
                         title="📢 Bump Tracked!",
-                        description=f"{bumper.mention} bumped the server.",
+                        description=f"User {bumper.mention} bumped the server!",
                         color=discord.Color.green()
                     )
-                    embed_log.add_field(name="Next Reminder", value=f"<t:{int(now.timestamp()) + REMINDER_INTERVAL}:R>")
-                    if role_id:
-                        await log_channel.send(f"<@&{role_id}>", embed=embed_log)
-                    else:
-                        await log_channel.send(embed=embed_log)
+                    embed_log.add_field(
+                        name="Next Reminder",
+                        value=f"<t:{int(now.timestamp()) + REMINDER_INTERVAL}:R>"
+                    )
+                    await log_channel.send(embed=embed_log)
 
 @tasks.loop(seconds=60)
 async def bump_reminder_loop():
@@ -103,7 +100,9 @@ async def bump_reminder_loop():
                     )
             last_bump_data[guild_id] = {"time": now, "user_id": bumper_id}
 
-@tree.command(name="setlogchannel", description="Set the channel where bump logs will be sent")
+# === SLASH COMMANDS ===
+
+@client.tree.command(name="setlogchannel", description="Set the channel where bump logs will be sent")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_log_channel(interaction: discord.Interaction):
     settings_col.update_one(
@@ -113,7 +112,7 @@ async def set_log_channel(interaction: discord.Interaction):
     )
     await interaction.response.send_message("✅ This channel has been set for bump logs.", ephemeral=True)
 
-@tree.command(name="setpingrole", description="Set the role to be pinged for bump reminders")
+@client.tree.command(name="setpingrole", description="Set the role to be pinged for bump reminders")
 @app_commands.describe(role="Role to ping after 2 hours")
 @app_commands.checks.has_permissions(administrator=True)
 async def set_ping_role(interaction: discord.Interaction, role: discord.Role):
@@ -124,7 +123,7 @@ async def set_ping_role(interaction: discord.Interaction, role: discord.Role):
     )
     await interaction.response.send_message(f"✅ {role.mention} will be pinged for bump reminders.", ephemeral=True)
 
-@tree.command(name="bumpstatus", description="Check time left until next bump")
+@client.tree.command(name="bumpstatus", description="Check time left until next bump")
 async def bumpstatus(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     data = last_bump_data.get(guild_id)
@@ -140,12 +139,12 @@ async def bumpstatus(interaction: discord.Interaction):
         ephemeral=True
     )
 
-@tree.command(name="bumphistory", description="Show recent bump history")
+@client.tree.command(name="bumphistory", description="Show recent bump history")
 async def bumphistory(interaction: discord.Interaction):
     guild_id = str(interaction.guild_id)
     records = bumps_col.find({"guild_id": guild_id}).sort("timestamp", -1).limit(5)
     lines = []
-    async for r in records:
+    for r in records:
         user = await client.fetch_user(r["user_id"])
         ts = r["timestamp"].replace(tzinfo=datetime.timezone.utc)
         lines.append(f"🔹 {user.mention} — <t:{int(ts.timestamp())}:R>")
@@ -155,7 +154,7 @@ async def bumphistory(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("📜 **Recent Bumps:**\n" + "\n".join(lines), ephemeral=True)
 
-@tree.command(name="userbumps", description="Check how many times a user has bumped")
+@client.tree.command(name="userbumps", description="Check how many times a user has bumped")
 @app_commands.describe(user="The user to check")
 async def userbumps(interaction: discord.Interaction, user: discord.User):
     guild_id = str(interaction.guild_id)
