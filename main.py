@@ -1,17 +1,18 @@
+
 import discord
 from discord.ext import tasks, commands
 from discord import app_commands
 import os
 import asyncio
-import datetime
+from datetime import datetime, UTC
 from pymongo import MongoClient
-from keep_alive import keep_alive  # Flask server to keep bot alive
+from keep_alive import keep_alive  # Flask server to keep alive
 
-# Get from Render environment variables
+# Get secrets from Render environment variables
 TOKEN = os.environ.get("DISCORD_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
-# Discord bot setup
+# Bot setup
 intents = discord.Intents.default()
 intents.messages = True
 intents.guilds = True
@@ -44,7 +45,7 @@ async def on_message(message):
 
     if message.guild and message.content.lower().startswith("!d bump"):
         guild_id = str(message.guild.id)
-        now = datetime.datetime.utcnow()
+        now = datetime.now(UTC)
         user_id = str(message.author.id)
 
         bump_data.update_one(
@@ -73,7 +74,7 @@ async def on_message(message):
 
 @tasks.loop(seconds=60)
 async def bump_reminder_loop():
-    now = datetime.datetime.utcnow()
+    now = datetime.now(UTC)
     for entry in bump_data.find():
         guild_id = entry.get("guild_id")
         user_id = entry.get("user_id")
@@ -104,7 +105,7 @@ async def bumpstatus(interaction: discord.Interaction):
 
     last = data.get("last_bump")
     user_id = data.get("user_id")
-    now = datetime.datetime.utcnow()
+    now = datetime.now(UTC)
 
     if not last or not user_id:
         await interaction.response.send_message("❌ No valid bump data.", ephemeral=True)
@@ -138,13 +139,13 @@ async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     )
     await interaction.response.send_message(f"✅ Ping role set to {role.mention}", ephemeral=True)
 
-# Error handling for permissions
+# Permission error handler
 @setlogchannel.error
 @setpingrole.error
 async def permission_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ You need administrator permission.", ephemeral=True)
 
-# Start the Flask server to keep alive + run bot
+# Start keep_alive Flask server + bot
 keep_alive()
 client.run(TOKEN)
