@@ -6,7 +6,7 @@ from keep_alive import keep_alive
 from datetime import datetime, timedelta, UTC
 import os
 
-# Environment variables (set these in Render)
+# Environment variables for Render
 TOKEN = os.environ.get("DISCORD_TOKEN")
 MONGO_URI = os.environ.get("MONGO_URI")
 
@@ -33,7 +33,7 @@ REMINDER_INTERVAL = 2 * 60 * 60  # 2 hours
 async def on_ready():
     print(f"✅ Logged in as {client.user}")
 
-    # Set bot status: Listening to /bump
+    # Custom bot presence
     activity = discord.Activity(type=discord.ActivityType.listening, name="/bump")
     await client.change_presence(status=discord.Status.online, activity=activity)
 
@@ -54,12 +54,29 @@ async def on_message(message):
         await handle_bump(message.author, message.guild)
         return
 
+    # Detect Disboard embed
     if message.author.id == 302050872383242240 and message.embeds:
         embed = message.embeds[0]
         if embed.title and "bump done" in embed.title.lower():
+            bumper = None
+
+            # Try to get user from interaction
             if message.interaction:
                 bumper = message.interaction.user
+            else:
+                # Fallback: Check last messages
+                try:
+                    async for msg in message.channel.history(limit=5, before=message):
+                        if msg.type == discord.MessageType.application_command and "/bump" in msg.content.lower():
+                            bumper = msg.author
+                            break
+                except Exception as e:
+                    print(f"⚠️ Fallback failed: {e}")
+
+            if bumper:
                 await handle_bump(bumper, message.guild)
+            else:
+                print("⚠️ Could not detect bumper.")
 
     await client.process_commands(message)
 
@@ -68,14 +85,14 @@ async def handle_bump(user, guild):
     guild_id = str(guild.id)
     user_id = str(user.id)
 
-    # Update latest bump
+    # Update bump record
     bump_data.update_one(
         {"guild_id": guild_id},
         {"$set": {"user_id": user_id, "last_bump": now}},
         upsert=True
     )
 
-    # Store history
+    # Save bump history
     bump_history.insert_one({
         "guild_id": guild_id,
         "user_id": user_id,
@@ -130,6 +147,7 @@ async def bump_reminder_loop():
                     f"🔁 It's time to bump again! {role_mention} — Last bump by {member.mention if member else f'<@{user_id}>'}"
                 )
 
+                # Reset last_bump to now to avoid spamming
                 bump_data.update_one(
                     {"guild_id": guild_id},
                     {"$set": {"last_bump": now}}
@@ -138,7 +156,6 @@ async def bump_reminder_loop():
             except Exception as e:
                 print(f"❌ Reminder error: {e}")
 
-# Slash: /bumpstatus
 @tree.command(name="bumpstatus", description="Check how long until the next bump reminder")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bumpstatus(interaction: discord.Interaction):
@@ -165,7 +182,6 @@ async def bumpstatus(interaction: discord.Interaction):
         f"⏱ Next reminder for <@{user_id}> in **{minutes} minutes**", ephemeral=True
     )
 
-# Slash: /setlogchannel
 @tree.command(name="setlogchannel", description="Set the log channel for bump tracking")
 @app_commands.checks.has_permissions(administrator=True)
 async def setlogchannel(interaction: discord.Interaction, channel: discord.TextChannel):
@@ -176,7 +192,6 @@ async def setlogchannel(interaction: discord.Interaction, channel: discord.TextC
     )
     await interaction.response.send_message(f"✅ Log channel set to {channel.mention}", ephemeral=True)
 
-# Slash: /setpingrole
 @tree.command(name="setpingrole", description="Set the role to ping after 2 hours")
 @app_commands.checks.has_permissions(administrator=True)
 async def setpingrole(interaction: discord.Interaction, role: discord.Role):
@@ -187,7 +202,6 @@ async def setpingrole(interaction: discord.Interaction, role: discord.Role):
     )
     await interaction.response.send_message(f"✅ Ping role set to {role.mention}", ephemeral=True)
 
-# Slash: /bumphistory
 @tree.command(name="bumphistory", description="See the last 10 bumps")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def bumphistory(interaction: discord.Interaction):
@@ -205,7 +219,6 @@ async def bumphistory(interaction: discord.Interaction):
     else:
         await interaction.response.send_message("📜 **Recent Bumps:**\n" + "\n".join(lines), ephemeral=True)
 
-# Slash: /userbumps
 @tree.command(name="userbumps", description="Check how many times a user bumped")
 @app_commands.checks.has_permissions(manage_guild=True)
 async def userbumps(interaction: discord.Interaction, user: discord.Member):
@@ -231,7 +244,7 @@ async def userbumps(interaction: discord.Interaction, user: discord.Member):
             ephemeral=True
         )
 
-# Permissions error handler
+# Handle missing permissions
 @setlogchannel.error
 @setpingrole.error
 @bumpstatus.error
@@ -241,6 +254,6 @@ async def permission_error(interaction: discord.Interaction, error):
     if isinstance(error, app_commands.errors.MissingPermissions):
         await interaction.response.send_message("❌ You need `Manage Server` permission.", ephemeral=True)
 
-# Keep alive + run
+# Uptime endpoint and bot run
 keep_alive()
 client.run(TOKEN)
